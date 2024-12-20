@@ -12,6 +12,29 @@ import (
 	"github.com/rogpeppe/generic/ring"
 )
 
+func TestRedditSuggestion(t *testing.T) {
+	t.Skip("This is an actual problem with all channels operators")
+	src := make(chan int)
+	ch := BufLongLived(src)
+
+	mu := sync.Mutex{}
+	mu.Lock()
+
+	go func() {
+		src <- 1
+		mu.Unlock()
+	}()
+
+	mu.Lock()
+	mu.Unlock()
+
+	select {
+	case <-ch:
+	default:
+		panic("unreachable")
+	}
+}
+
 func TestBufLongLived(t *testing.T) {
 	tsize := 10000
 	input := func() []int {
