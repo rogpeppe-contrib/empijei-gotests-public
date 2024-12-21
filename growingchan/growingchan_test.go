@@ -1,9 +1,9 @@
 package growingchan
 
 import (
+	"log"
 	"math/rand"
 	"sort"
-	"strconv"
 	"sync"
 	"testing"
 
@@ -11,6 +11,15 @@ import (
 
 	"github.com/rogpeppe/generic/ring"
 )
+
+func TestBenchWhatGoesOn(t *testing.T) {
+	var q *sliceQueue[int]
+	runBjitter(3000, func() Queue[int] {
+		q = &sliceQueue[int]{}
+		return q
+	})
+	log.Printf("allocs: %d", q.allocs)
+}
 
 func TestRedditSuggestion(t *testing.T) {
 	t.Skip("This is an actual problem with all channels operators")
@@ -248,13 +257,14 @@ BenchmarkQueue/more_recv/10000/ring_buffer-14         	     771	   1598661 ns/op
 func BenchmarkQueue(b *testing.B) {
 	tests := []struct {
 		name string
-		r    func(b *testing.B, qf func() Queue[int], size int)
+		r    func(n int, qf func() Queue[int])
 	}{
-		{"1 by 1", runB1b1},
-		{"send first", runBsendFirst},
-		{"with jitter", runBjitter},
-		{"more send", runBmoreSend},
-		{"more recv", runBmoreRecv},
+		{"1_by_11", runB1b1},
+		{"send_first", runBsendFirst},
+		{"with_jitter", runBjitter},
+		{"concurrent", runBconcurrent},
+		//{"more send", runBmoreSend},
+		//{"more recv", runBmoreRecv},
 	}
 
 	impls := []struct {
@@ -287,83 +297,92 @@ func BenchmarkQueue(b *testing.B) {
 		*/
 	}
 
-	sizes := []int{1000, 10000}
-
 	for _, t := range tests {
 		b.Run(t.name, func(b *testing.B) {
-			for _, s := range sizes {
-				b.Run(strconv.Itoa(s), func(b *testing.B) {
-					for _, i := range impls {
-						b.Run(i.name, func(b *testing.B) {
-							t.r(b, i.ctor, s)
-						})
-					}
+			for _, i := range impls {
+				b.Run(i.name, func(b *testing.B) {
+					b.ReportAllocs()
+					t.r(b.N, i.ctor)
 				})
 			}
 		})
 	}
 }
 
-func runB1b1(b *testing.B, qf func() Queue[int], size int) {
-	b.ReportAllocs()
-	b.ResetTimer()
-	for range b.N {
-		in := make(chan int)
-		out := BufLongLivedCustomQueue(in, qf())
-		for range size {
+func runB1b1(n int, qf func() Queue[int]) {
+	in := make(chan int)
+	out := BufLongLivedCustomQueue(in, qf())
+	for range n {
+		in <- 1
+		<-out
+	}
+	close(in)
+	for range out {
+	}
+}
+
+func runBsendFirst(n int, qf func() Queue[int]) {
+	in := make(chan int)
+	out := BufLongLivedCustomQueue(in, qf())
+	for range n {
+		for range 10 {
 			in <- 1
+		}
+		for range 10 {
 			<-out
 		}
-		close(in)
-		for range out {
-		}
+	}
+	close(in)
+	for range out {
 	}
 }
 
-func runBsendFirst(b *testing.B, qf func() Queue[int], size int) {
-	b.ReportAllocs()
-	b.ResetTimer()
-	for range b.N {
-		in := make(chan int)
-		out := BufLongLivedCustomQueue(in, qf())
-		for range size {
+func runBconcurrent(n int, qf func() Queue[int]) {
+	in := make(chan int)
+	out := BufLongLivedCustomQueue(in, qf())
+
+	go func() {
+		defer close(in)
+		for range n {
 			in <- 1
+			//if (i & 0xff) == 0 {
+			//	if atomic.AddInt64(&size, 256) > 1000 {
+			//		time.Sleep(0)
+			//	}
+			//}
 		}
-		close(in)
-		for range out {
-		}
+	}()
+
+	for range n {
+		<-out
+		//if (i & 0xff) == 0 {
+		//	atomic.AddInt64(&size, -256)
+		//}
 	}
 }
 
-func runBjitter(b *testing.B, qf func() Queue[int], size int) {
-	b.ReportAllocs()
-	b.ResetTimer()
+func runBjitter(n int, qf func() Queue[int]) {
 	const jitter = 10
-	for range b.N {
-		in := make(chan int)
-		out := BufLongLivedCustomQueue(in, qf())
-		for range jitter {
-			for range rand.Intn(size / jitter) {
-				in <- 1
-			}
-			for range rand.Intn(size / jitter) {
-				select {
-				case <-out:
-				default:
-				}
-			}
+	in := make(chan int)
+	out := BufLongLivedCustomQueue(in, qf())
+	size := 0
+	for range n {
+		if rand.Intn(2) == 0 {
+			in <- 1
+			size++
+		} else if size > 0 {
+			<-out
+			size--
 		}
-		close(in)
-		for range out {
-		}
+	}
+	close(in)
+	for range out {
 	}
 }
 
-func runBmoreSend(b *testing.B, qf func() Queue[int], size int) {
-	b.ReportAllocs()
-	b.ResetTimer()
+func runBmoreSend(n int, qf func() Queue[int], size int) {
 	const jitter = 10
-	for range b.N {
+	for range n {
 		in := make(chan int)
 		out := BufLongLivedCustomQueue(in, qf())
 		for range jitter {
@@ -383,11 +402,9 @@ func runBmoreSend(b *testing.B, qf func() Queue[int], size int) {
 	}
 }
 
-func runBmoreRecv(b *testing.B, qf func() Queue[int], size int) {
-	b.ReportAllocs()
-	b.ResetTimer()
+func runBmoreRecv(n int, qf func() Queue[int], size int) {
 	const jitter = 10
-	for range b.N {
+	for range n {
 		in := make(chan int)
 		out := BufLongLivedCustomQueue(in, qf())
 		for range jitter {

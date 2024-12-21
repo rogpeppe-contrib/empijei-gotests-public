@@ -146,7 +146,7 @@ func BufLongLivedCustomQueue[T any](in <-chan T, q Queue[T]) <-chan T {
 			nout chan T
 		)
 		for in != nil || nout != nil {
-			if q.Len() < q.Cap()/4 {
+			if n := q.Len(); n > 200 && n < q.Cap()/4 {
 				// Shrink if the number of elements
 				// has reduced a lot.
 				q.SetCap(q.Len() * 2)

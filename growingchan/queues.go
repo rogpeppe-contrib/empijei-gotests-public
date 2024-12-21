@@ -1,38 +1,46 @@
 package growingchan
 
-import "sync"
+import (
+	"log"
+	"sync"
+)
 
 // Slice
 
 var _ Queue[int] = &sliceQueue[int]{}
 
-type sliceQueue[T any] []T
+type sliceQueue[T any] struct {
+	q      []T
+	allocs int
+}
 
 func (sq *sliceQueue[T]) Cap() int {
-	return cap(*sq)
+	return cap(sq.q)
 }
 
 func (sq *sliceQueue[T]) Len() int {
-	return len(*sq)
+	return len(sq.q)
 }
 
-func (sq *sliceQueue[T]) SetCap(newCap int) {
-	if newCap < len(*sq) {
-		panic("not enough capacity")
-	}
-	n := make([]T, len(*sq), newCap)
-	copy(n, *sq)
-	*sq = n
-}
+func (sq *sliceQueue[T]) SetCap(n int) {}
 
 func (sq *sliceQueue[T]) PopEnd() T {
-	v := (*sq)[0]
-	*sq = (*sq)[1:]
+	v := sq.q[0]
+	sq.q = sq.q[1:]
+	log.Printf("PopEnd -> %v:%v", len(sq.q), cap(sq.q))
 	return v
 }
 
 func (sq *sliceQueue[T]) PushStart(v T) {
-	*sq = append(*sq, v)
+	var old *T
+	if len(sq.q) > 0 {
+		old = &(sq.q)[0]
+	}
+	sq.q = append(sq.q, v)
+	if &sq.q[0] != old {
+		sq.allocs++
+	}
+	log.Printf("PushStart -> %v:%v (new %v)", len(sq.q), cap(sq.q), &sq.q[0] != old)
 }
 
 // LinkedList
