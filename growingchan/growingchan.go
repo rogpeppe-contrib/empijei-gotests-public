@@ -142,19 +142,22 @@ func BufLongLivedCustomQueue[T any](in <-chan T, q Queue[T]) <-chan T {
 	go func() {
 		defer close(out)
 		var (
-			queue []T
-			next  T
-			nout  chan T
+			next T
+			nout chan T
 		)
 		for in != nil || nout != nil {
+			if q.Len() < q.Cap()/4 {
+				// Shrink if the number of elements
+				// has reduced a lot.
+				q.SetCap(q.Len() * 2)
+			}
 			select {
 			case nout <- next:
-				if len(queue) == 0 {
+				if q.Len() == 0 {
 					nout = nil
 					continue
 				}
-				next = queue[0]
-				queue = queue[1:]
+				next = q.PopEnd()
 				continue
 			default:
 			}
@@ -168,15 +171,14 @@ func BufLongLivedCustomQueue[T any](in <-chan T, q Queue[T]) <-chan T {
 					nout = out
 					next = v
 				} else {
-					queue = append(queue, v)
+					q.PushStart(v)
 				}
 			case nout <- next:
-				if len(queue) == 0 {
+				if q.Len() == 0 {
 					nout = nil
 					continue
 				}
-				next = queue[0]
-				queue = queue[1:]
+				next = q.PopEnd()
 			}
 		}
 	}()
